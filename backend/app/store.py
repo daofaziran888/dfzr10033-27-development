@@ -10,13 +10,21 @@ from app.seed import SEED_ROWS
 
 
 class Store:
+    # 稀疏分窗指标域的数据表不是独立业务模块，不进入模块清单和运营概览。
+    AUX_TABLES = {
+        "window_event",
+        "sparse_window_metric",
+        "window_confirmation",
+        "metric_publication",
+    }
+
     def __init__(self) -> None:
         self._tables: dict[str, list[dict[str, Any]]] = {
             name: [dict(row) for row in rows] for name, rows in SEED_ROWS.items()
         }
 
     def module_names(self) -> list[str]:
-        return sorted(self._tables)
+        return sorted(name for name in self._tables if name not in self.AUX_TABLES)
 
     def rows(self, module: str) -> list[dict[str, Any]]:
         return self._tables.setdefault(module, [])

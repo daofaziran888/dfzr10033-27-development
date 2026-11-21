@@ -17,6 +17,7 @@
 ├── backend/                  FastAPI（Python） 后端
 │   ├── app/routers/resource.py  通用查询/导出/登记/动作接口
 │   ├── app/services/<key>.py    每个模块独立领域逻辑
+│   ├── app/services/sparse_window_metric.py  稀疏分窗指标域（内部数据表）
 │   ├── app/services/base.py     共享服务骨架
 │   └── app/store.py          内存数据仓库与示例数据
 ├── .gitignore
@@ -72,6 +73,36 @@ npm run dev
 | 结果缓存 | `result_cache` | 缓存条目 | 条目编号、查询摘要、结果哈希 |
 | 数据契约 | `data_contract` | 契约定义 | 契约编号、数据集、Schema约束 |
 | 实验配置 | `ab_config` | AB实验 | 实验编号、实验名称、分流比例 |
+
+## 稀疏分窗指标
+
+指标工厂不再直接读取整批聚合明细自行分窗，而是消费 `sparse_window_metric`
+里按事件时间切好的稀疏窗口结果，再把发布结论回写 `window_confirmation`。
+
+| 接口 | 说明 |
+| --- | --- |
+| `POST /api/window-metrics/events` | 登记带事件时间的立方明细（事件编号在立方内唯一） |
+| `POST /api/window-metrics/compute` | 按窗口定义切分窗口，写入窗口指标 |
+| `GET /api/window-metrics` | 读取窗口指标（可按立方/窗口/状态筛选） |
+| `GET /api/window-metrics/report` | 业务报表：已观测时段统计 + 整期是否完整 |
+| `POST /api/window-metrics/{id}/recompute` | 按窗口快照补算单个窗口 |
+| `POST /api/window-metrics/publish` | 发布整期指标并回写确认清单 |
+| `GET /api/window-metrics/publications` | 发布记录 |
+| `GET /api/window-metrics/publications/{id}` | 发布记录关联回入窗事件 |
+| `POST /api/window-metrics/publications/{id}/retry` | 中断后按事件编号复算分母重试 |
+| `GET /api/window-metrics/confirmations` | 窗口确认清单（已发布/实测为零/仍缺观测） |
+| `POST /api/pipelines/metric-window-publish` | 指标工厂跨模块发布管线 |
+
+窗口状态语义：
+
+- `已观测`：窗口内有事件，`值类型` 为 `实测值` 或 `实测零值`。
+- `空窗`：夹在两次已观测事件之间、本窗口没有事件，`观测值` 为 `null`，
+  保留 `缺值原因`，不会记为 0。
+- `缺证据`：超出已确认事件时间范围或完全没有事件，同样 `观测值` 为 `null`。
+
+只要窗口集合里存在 `空窗` 或 `缺证据`，`整期均值` 就是 `null`；迟到的真实
+零值入窗后转为 `实测零值`，整期均值才会把它计入。补算只使用窗口行快照里的
+`对齐基准`、`滑动宽度`、`事件时间基准`，事后修改窗口配置不会移动既有边界。
 
 ## 约定
 

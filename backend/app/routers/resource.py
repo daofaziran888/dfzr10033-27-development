@@ -23,6 +23,143 @@ def require_service(module: str):
     return service
 
 
+# -- 稀疏分窗指标域（必须在 /{module} 动态路由之前注册） --
+
+from app.services import sparse_window_metric as window_metrics  # noqa: E402
+
+window_metric_svc = window_metrics._service
+
+
+@router.get("/window-metrics/events")
+def list_window_events(cube_id: str | None = Query(default=None)) -> dict[str, Any]:
+    events = window_metric_svc.list_events(cube_id)
+    return {"items": events, "total": len(events)}
+
+
+@router.post("/window-metrics/events")
+def ingest_window_event(
+    cube_id: str = Query(...),
+    event_no: str = Query(...),
+    event_time: str = Query(...),
+    value: float = Query(...),
+    batch: str = Query(default="manual"),
+) -> dict[str, Any]:
+    result = window_metric_svc.ingest_event(cube_id, event_no, event_time, value, batch=batch)
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("message"))
+    return result
+
+
+@router.post("/window-metrics/compute")
+def compute_window_metrics(
+    cube_id: str = Query(...),
+    window_ref: str | None = Query(default=None),
+    metric_id: str = Query(default=""),
+    formula: str = Query(default="SUM"),
+    start: str | None = Query(default=None),
+    end: str | None = Query(default=None),
+    confirmed_through: str | None = Query(default=None),
+) -> dict[str, Any]:
+    result = window_metric_svc.compute_windows(
+        cube_id=cube_id, window_ref=window_ref, metric_id=metric_id, formula=formula,
+        start=start, end=end, confirmed_through=confirmed_through,
+    )
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("message"))
+    return result
+
+
+@router.get("/window-metrics")
+def list_window_metrics(
+    cube_id: str | None = Query(default=None),
+    window_ref: str | None = Query(default=None),
+    metric_id: str | None = Query(default=None),
+    state: str | None = Query(default=None),
+) -> dict[str, Any]:
+    items = window_metric_svc.list_metrics(
+        cube_id=cube_id, window_ref=window_ref, metric_id=metric_id, state=state,
+    )
+    return {"items": items, "total": len(items)}
+
+
+@router.get("/window-metrics/report")
+def window_metric_report(
+    cube_id: str = Query(...),
+    window_ref: str | None = Query(default=None),
+    metric_id: str = Query(default=""),
+    formula: str = Query(default="SUM"),
+    start: str | None = Query(default=None),
+    end: str | None = Query(default=None),
+    confirmed_through: str | None = Query(default=None),
+    refresh: bool = Query(default=True),
+) -> dict[str, Any]:
+    result = window_metric_svc.report_period(
+        cube_id=cube_id, window_ref=window_ref, metric_id=metric_id, formula=formula,
+        start=start, end=end, confirmed_through=confirmed_through, refresh=refresh,
+    )
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("message"))
+    return result
+
+
+@router.post("/window-metrics/{metric_row_id}/recompute")
+def recompute_window_metric(metric_row_id: int) -> dict[str, Any]:
+    result = window_metric_svc.recompute_window(metric_row_id)
+    if not result.get("ok"):
+        raise HTTPException(status_code=404, detail=result.get("message"))
+    return result
+
+
+@router.post("/window-metrics/publish")
+def publish_window_metric(
+    metric_id: str = Query(...),
+    cube_id: str = Query(...),
+    window_ref: str | None = Query(default=None),
+    formula: str = Query(default="SUM"),
+    start: str | None = Query(default=None),
+    end: str | None = Query(default=None),
+    confirmed_through: str | None = Query(default=None),
+) -> dict[str, Any]:
+    result = window_metric_svc.publish_period(
+        metric_id=metric_id, cube_id=cube_id, window_ref=window_ref, formula=formula,
+        start=start, end=end, confirmed_through=confirmed_through,
+    )
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("message"))
+    return result
+
+
+@router.get("/window-metrics/publications")
+def list_metric_publications() -> dict[str, Any]:
+    items = window_metric_svc.list_publications()
+    return {"items": items, "total": len(items)}
+
+
+@router.get("/window-metrics/publications/{publication_id}")
+def get_metric_publication(publication_id: str) -> dict[str, Any]:
+    result = window_metric_svc.publication_events(publication_id)
+    if not result.get("ok"):
+        raise HTTPException(status_code=404, detail=result.get("message"))
+    return result
+
+
+@router.post("/window-metrics/publications/{publication_id}/retry")
+def retry_metric_publication(publication_id: str) -> dict[str, Any]:
+    result = window_metric_svc.retry_publication(publication_id)
+    if not result.get("ok"):
+        raise HTTPException(status_code=404, detail=result.get("message"))
+    return result
+
+
+@router.get("/window-metrics/confirmations")
+def list_window_confirmations(
+    publication_no: str | None = Query(default=None),
+    result: str | None = Query(default=None),
+) -> dict[str, Any]:
+    items = window_metric_svc.list_confirmations(publication_no=publication_no, result=result)
+    return {"items": items, "total": len(items)}
+
+
 # -- CRUD --
 
 @router.get("/{module}", response_model=PageResult[dict])
@@ -97,6 +234,7 @@ from app.services.query_audit import QueryAuditService
 from app.services.cost_govern import CostGovernService
 from app.services.data_contract import DataContractService
 from app.services.semantic_model import SemanticModelService
+from app.services.metric_factory import MetricFactoryService
 
 source_svc = SourceRegistryService()
 semantic_svc = SemanticModelService()
@@ -110,6 +248,7 @@ rewrite_svc = QueryRewriteService()
 audit_svc = QueryAuditService()
 cost_svc = CostGovernService()
 contract_svc = DataContractService()
+metric_svc = MetricFactoryService()
 
 
 @router.post("/pipelines/source-to-federated")
@@ -221,3 +360,22 @@ def pipeline_cost_aggregate_alert() -> dict[str, Any]:
             "cost_aggregation": cost_svc.aggregate_module_costs(),
             "quota_check": cost_svc.check_monthly_quota(),
             "cache_report": result_cache_svc.cache_hit_rate_report()}
+
+
+@router.post("/pipelines/metric-window-publish")
+def pipeline_metric_window_publish(
+    metric_id: int = Query(...),
+    cube_id: int = Query(...),
+    window_ref: str | None = Query(default=None),
+    start: str | None = Query(default=None),
+    end: str | None = Query(default=None),
+    confirmed_through: str | None = Query(default=None),
+) -> dict[str, Any]:
+    """指标工厂读取稀疏分窗结果 -> 产出整期指标 -> 回写窗口确认清单。"""
+    result = metric_svc.compute_metric(
+        metric_id, cube_id, window_ref=window_ref,
+        start=start, end=end, confirmed_through=confirmed_through,
+    )
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("message"))
+    return {"ok": True, "pipeline": "metric_window_publish", **result}
